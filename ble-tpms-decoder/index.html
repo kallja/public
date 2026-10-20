@@ -79,9 +79,9 @@
       <div class="field">
         <span>Input type</span>
         <select id="mode">
-          <option value="auto">Auto (advertisement or manufacturer data)</option>
-          <option value="mfr">Manufacturer data, company ID stripped</option>
-          <option value="gatt">GATT TPData indication (0213)</option>
+          <option value="auto">Auto-detect</option>
+          <option value="mfr">Fixed-layout manufacturer data, company ID stripped</option>
+          <option value="protobuf">Protobuf (0x05 frame or GATT reply)</option>
         </select>
       </div>
       <div class="field">
@@ -109,7 +109,8 @@
     <div class="examples">Examples:
       <button type="button" data-hex="0201060BFF2B0201020A860148EA0B" data-mode="auto">awake advert</button>
       <button type="button" data-hex="2B0201FE03" data-mode="auto">sleep frame</button>
-      <button type="button" data-hex="12 08 E2 01 05 08 8F 04 10 28" data-mode="gatt">GATT TPData</button>
+      <button type="button" data-hex="2B020512102A0E08FA021016180320961728013003" data-mode="auto">0x05 frame</button>
+      <button type="button" data-hex="12 08 E2 01 05 08 8F 04 10 28" data-mode="protobuf">GATT reply</button>
     </div>
   </section>
 
@@ -174,7 +175,7 @@
     const badge = r.awake
       ? `<span class="status awake">AWAKE</span>`
       : `<span class="status asleep">ASLEEP</span>`;
-    const src = r.source === 'gatt' ? 'GATT TPData' : `advertisement, ${esc(r.profile)} formula`;
+    const src = r.source === 'protobuf' ? 'protobuf frame' : `fixed-layout advertisement, ${esc(r.profile)} formula`;
 
     let stats = '';
     if (r.pressureBar != null) {

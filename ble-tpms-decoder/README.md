@@ -6,7 +6,7 @@ It accepts:
 
 - a full advertisement, e.g. `0201060BFF2B0201020A860148EA0B`
 - manufacturer data for company ID `0x022B`, with or without the `2B 02` prefix
-- a GATT `TPData` indication from characteristic `0213`
+- a protobuf frame: the `0x05`-prefixed frames seen under company ID `0x022B`, or a GATT `TPData` reply from characteristic `0213`
 
 You can prefill the input with a link such as `…/#hex=0201060BFF2B0201020A860148EA0B`.
 

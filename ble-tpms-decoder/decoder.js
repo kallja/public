@@ -170,9 +170,16 @@ export function decodeFullAdvertisement(payload, profile = PROFILES.default) {
   return null;
 }
 
-// --- GATT TPData indication (characteristic 0213) -------------------------
-// TPData { int32 pressure = 1; sint32 temperature = 2; }, usually nested
-// inside outer messages. Pressure is absolute kPa, temperature whole degC.
+// --- Protobuf frames --------------------------------------------------------
+// The GATT TPData indication (characteristic 0213) and the 0x05-prefixed
+// frames seen under company ID 0x022B carry a protobuf message, nested inside
+// one or more outer messages, with:
+//   f1 = absolute pressure, kPa
+//   f2 = temperature, sint32 (zigzag), whole degC
+//   f4 = battery millivolts (0x05 frames only)
+// Other fields are unknown and shown raw. Example 0x05 frame:
+//   2B 02 | 05 | 12 10 | 2A 0E | 08 FA 02  10 16  18 03  20 96 17  28 01  30 03
+//   company  ?    f2      f5     f1=378   f2=22  f3=3   f4=2966   f5=1   f6=3
 
 function readVarint(data, i) {
   let shift = 0;
@@ -187,6 +194,8 @@ function readVarint(data, i) {
   return null;
 }
 
+// Strict parse: any malformed or trailing byte rejects the whole message, so
+// fixed-layout advertisements are not mistaken for protobuf.
 function collectProtobuf(data) {
   const varints = new Map();
   const submessages = [];
@@ -194,41 +203,43 @@ function collectProtobuf(data) {
   const n = data.length;
   while (i < n) {
     const key = readVarint(data, i);
-    if (!key) break;
+    if (!key) return null;
     const tag = Number(key[0]);
     i = key[1];
     const fieldNumber = tag >>> 3;
     const wireType = tag & 0x07;
+    if (fieldNumber === 0) return null;
     if (wireType === 0) {
       const got = readVarint(data, i);
-      if (!got) break;
+      if (!got) return null;
       varints.set(fieldNumber, got[0]);
       i = got[1];
     } else if (wireType === 2) {
       const got = readVarint(data, i);
-      if (!got) break;
+      if (!got) return null;
       const length = Number(got[0]);
       i = got[1];
-      if (i + length > n) break;
+      if (i + length > n) return null;
       submessages.push(data.subarray(i, i + length));
       i += length;
-    } else if (wireType === 5) {
-      i += 4;
-    } else if (wireType === 1) {
-      i += 8;
+    } else if (wireType === 5 || wireType === 1) {
+      i += wireType === 5 ? 4 : 8;
+      if (i > n) return null;
     } else {
-      break;
+      return null;
     }
   }
   return { varints, submessages };
 }
 
-function findTpdataFields(data, depth = 0) {
+// Returns the varint fields of the first message, depth-first, carrying f1.
+function findMeasurement(data, depth = 0) {
   if (depth > 5) return null;
-  const { varints, submessages } = collectProtobuf(data);
-  if (varints.has(1)) return [varints.get(1), varints.get(2) ?? null];
-  for (const sub of submessages) {
-    const found = findTpdataFields(sub, depth + 1);
+  const msg = collectProtobuf(data);
+  if (!msg) return null;
+  if (msg.varints.has(1)) return msg.varints;
+  for (const sub of msg.submessages) {
+    const found = findMeasurement(sub, depth + 1);
     if (found) return found;
   }
   return null;
@@ -236,40 +247,53 @@ function findTpdataFields(data, depth = 0) {
 
 const unzigzag = (v) => Number((v >> 1n) ^ -(v & 1n));
 
-export function decodeTpdata(payload) {
-  const found = findTpdataFields(payload);
-  if (!found) return null;
-  const [pressureRawBig, temperatureRaw] = found;
-  if (pressureRawBig < 0n || pressureRawBig > 100000n) return null;
-  const pressureRaw = Number(pressureRawBig);
+// The payload as pasted, without the 2B 02 company ID, and each of those
+// without a leading message-type byte such as 0x05.
+function protobufCandidates(bytes) {
+  const out = [bytes];
+  if (bytes[0] === 0x2b && bytes[1] === 0x02) out.push(bytes.subarray(2));
+  for (const c of [...out]) if (c.length > 1) out.push(c.subarray(1));
+  return out;
+}
 
-  const raw = { gatt_pressure: pressureRaw };
-  let temperatureC = null;
-  if (temperatureRaw != null) {
-    temperatureC = unzigzag(temperatureRaw);
-    raw.gatt_temperature = Number(temperatureRaw);
+export function decodeProtobuf(payload) {
+  for (const candidate of protobufCandidates(payload)) {
+    const fields = findMeasurement(candidate);
+    if (!fields) continue;
+    // Absolute pressure in kPa; anything outside this is a mis-parse.
+    const pressureRaw = Number(fields.get(1));
+    if (pressureRaw < 50 || pressureRaw > 1500) continue;
+
+    const raw = {};
+    for (const [k, v] of [...fields].sort((a, b) => a[0] - b[0])) raw[`f${k}`] = Number(v);
+
+    let pressureBar = (pressureRaw - ATMOSPHERE_KPA) / 100;
+    if (pressureBar > -0.2 && pressureBar < 0) pressureBar = 0;
+
+    const temperatureC = fields.has(2) ? unzigzag(fields.get(2)) : null;
+
+    const mv = fields.has(4) ? Number(fields.get(4)) : null;
+    const volts = mv != null && mv >= 1500 && mv <= 4300 ? mv / 1000 : null;
+
+    return withUnits({
+      source: 'protobuf',
+      awake: true,
+      status: STATUS_AWAKE_MIN,
+      pressureBar: round(pressureBar, 3),
+      temperatureC,
+      batteryVolts: volts == null ? null : round(volts, 3),
+      batteryPercent: volts == null ? null : batteryPercentage(volts),
+      raw,
+      profile: 'protobuf',
+    });
   }
-
-  let pressureBar = (pressureRaw - ATMOSPHERE_KPA) / 100;
-  if (pressureBar > -0.2 && pressureBar < 0) pressureBar = 0;
-
-  return withUnits({
-    source: 'gatt',
-    awake: true,
-    status: STATUS_AWAKE_MIN,
-    pressureBar: round(pressureBar, 3),
-    temperatureC,
-    batteryVolts: null,
-    batteryPercent: null,
-    raw,
-    profile: 'connection',
-  });
+  return null;
 }
 
 // Decodes whatever was pasted: a full advertisement, bare manufacturer data
-// (with or without the 2B 02 company ID), or a GATT TPData indication.
+// (with or without the 2B 02 company ID), or a protobuf frame.
 export function decodeAny(bytes, mode, profile = PROFILES.default) {
-  if (mode === 'gatt') return decodeTpdata(bytes);
+  if (mode === 'protobuf') return decodeProtobuf(bytes);
   if (mode === 'mfr') return decode(bytes, profile);
-  return decodeFullAdvertisement(bytes, profile) ?? decode(bytes, profile);
+  return decodeProtobuf(bytes) ?? decodeFullAdvertisement(bytes, profile) ?? decode(bytes, profile);
 }

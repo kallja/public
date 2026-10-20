@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHex, decode, decodeAny, decodeTpdata, PROFILES } from './decoder.js';
+import { parseHex, decode, decodeAny, decodeProtobuf, PROFILES } from './decoder.js';
 
 test('should decode an awake full advertisement', () => {
   const r = decodeAny(parseHex('0201060BFF2B0201020A860148EA0B'), 'auto');
@@ -31,10 +31,32 @@ test('should report a sleep frame without measurements', () => {
 });
 
 test('should decode a nested GATT TPData indication', () => {
-  const r = decodeTpdata(parseHex('12 08 E2 01 05 08 8F 04 10 28'));
-  assert.equal(r.raw.gatt_pressure, 527);
+  const r = decodeProtobuf(parseHex('12 08 E2 01 05 08 8F 04 10 28'));
+  assert.equal(r.raw.f1, 527);
   assert.equal(r.pressureBar, 4.257);
   assert.equal(r.temperatureC, 20);
+  assert.equal(r.batteryVolts, null);
+});
+
+test('should decode a 0x05 protobuf frame in auto mode', () => {
+  const r = decodeAny(parseHex('0x2B020512102A0E08FA021016180320961728013003'), 'auto');
+  assert.equal(r.source, 'protobuf');
+  assert.equal(r.pressureBar, 2.767);
+  assert.equal(r.temperatureC, 11);
+  assert.equal(r.batteryVolts, 2.966);
+  assert.deepEqual(r.raw, { f1: 378, f2: 22, f3: 3, f4: 2966, f5: 1, f6: 3 });
+});
+
+test('should decode a 0x05 protobuf frame without the company ID', () => {
+  const r = decodeAny(parseHex('0512102A0E08890310261803209B1728013003'), 'protobuf');
+  assert.equal(r.pressureBar, 2.917);
+  assert.equal(r.temperatureC, 19);
+});
+
+test('should not treat fixed-layout frames as protobuf', () => {
+  assert.equal(decodeProtobuf(parseHex('0201060BFF2B0201020A860148EA0B')), null);
+  assert.equal(decodeProtobuf(parseHex('01020A860148EA0B')), null);
+  assert.equal(decodeProtobuf(parseHex('2B0201FE03')), null);
 });
 
 test('should reject odd-length hex', () => {
