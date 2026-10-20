@@ -91,6 +91,20 @@
           <option value="legacy">Legacy ESP32 fit</option>
         </select>
       </div>
+      <div class="field">
+        <span>Pressure unit</span>
+        <select id="pressureUnit">
+          <option value="bar">bar</option>
+          <option value="psi">psi</option>
+        </select>
+      </div>
+      <div class="field">
+        <span>Temperature unit</span>
+        <select id="tempUnit">
+          <option value="c">°C</option>
+          <option value="f">°F</option>
+        </select>
+      </div>
     </div>
     <div class="examples">Examples:
       <button type="button" data-hex="0201060BFF2B0201020A860148EA0B" data-mode="auto">awake advert</button>
@@ -114,7 +128,22 @@
   const hexEl = document.getElementById('hex');
   const modeEl = document.getElementById('mode');
   const profileEl = document.getElementById('profile');
+  const pressureUnitEl = document.getElementById('pressureUnit');
+  const tempUnitEl = document.getElementById('tempUnit');
   const out = document.getElementById('out');
+
+  const UNITS_KEY = 'ble-tpms-units';
+  try {
+    const saved = JSON.parse(localStorage.getItem(UNITS_KEY) ?? '{}');
+    if (saved.pressure === 'psi') pressureUnitEl.value = 'psi';
+    if (saved.temp === 'f') tempUnitEl.value = 'f';
+  } catch {}
+
+  function saveUnits() {
+    try {
+      localStorage.setItem(UNITS_KEY, JSON.stringify({ pressure: pressureUnitEl.value, temp: tempUnitEl.value }));
+    } catch {}
+  }
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmt = (v, d) => (v == null ? '–' : v.toFixed(d));
@@ -149,10 +178,12 @@
 
     let stats = '';
     if (r.pressureBar != null) {
-      stats += stat('Pressure', `${fmt(r.pressureBar, 2)} bar`, `${fmt(r.pressurePsi, 1)} psi · ${fmt(r.pressureKpa, 0)} kPa`);
+      const p = pressureUnitEl.value === 'psi' ? `${fmt(r.pressurePsi, 1)} psi` : `${fmt(r.pressureBar, 2)} bar`;
+      stats += stat('Pressure', p);
     }
     if (r.temperatureC != null) {
-      stats += stat('Temperature', `${fmt(r.temperatureC, 1)} °C`, `${fmt(r.temperatureC * 9 / 5 + 32, 1)} °F`);
+      const t = tempUnitEl.value === 'f' ? `${fmt(r.temperatureC * 9 / 5 + 32, 1)} °F` : `${fmt(r.temperatureC, 1)} °C`;
+      stats += stat('Temperature', t);
     }
     if (r.batteryVolts != null) {
       stats += stat('Battery', `${fmt(r.batteryVolts, 2)} V`, `≈ ${r.batteryPercent}%`);
@@ -170,6 +201,7 @@
   }
 
   for (const el of [hexEl, modeEl, profileEl]) el.addEventListener('input', render);
+  for (const el of [pressureUnitEl, tempUnitEl]) el.addEventListener('input', () => { saveUnits(); render(); });
   document.querySelectorAll('[data-hex]').forEach((b) =>
     b.addEventListener('click', () => {
       hexEl.value = b.dataset.hex;
