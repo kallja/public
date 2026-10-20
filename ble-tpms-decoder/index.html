@@ -63,6 +63,17 @@
   td { padding: 3px 16px 3px 0; }
   td:first-child { color: var(--muted); }
   .note { font-size: 13px; color: var(--muted); }
+  .mono { font-family: var(--mono); }
+  .scroll { overflow-x: auto; }
+  table.summary { font: 14px system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; width: 100%; }
+  table.summary th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding: 0 16px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.summary td { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.summary td:nth-child(2), table.summary td:nth-child(3) { font-weight: 700; }
+  .frames { margin-top: 16px; }
+  details { border-top: 1px solid var(--border); padding: 8px 0; }
+  details:last-child { border-bottom: 1px solid var(--border); }
+  summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  details[open] summary { margin-bottom: 10px; }
   footer { font-size: 13px; color: var(--muted); margin-top: 24px; }
   a { color: var(--accent); }
 </style>
@@ -70,10 +81,10 @@
 <body>
 <main>
   <h1>BLE TPMS Decoder</h1>
-  <p class="sub">Paste a captured frame from a BLE tyre pressure sensor (company ID 0x022B). Decoding runs in your browser and nothing is sent anywhere.</p>
+  <p class="sub">Paste captured frames from BLE tyre pressure sensors (company ID 0x022B), one per line. Decoding runs in your browser and nothing is sent anywhere.</p>
 
   <section class="card">
-    <label for="hex">Hex payload</label>
+    <label for="hex">Hex payloads, one per line</label>
     <textarea id="hex" spellcheck="false" autocomplete="off" placeholder="0201060BFF2B0201020A860148EA0B"></textarea>
     <div class="row">
       <div class="field">
@@ -124,7 +135,7 @@
 </main>
 
 <script type="module">
-  import { parseHex, decodeAny, PROFILES } from './decoder.js';
+  import { decodeLines, PROFILES } from './decoder.js';
 
   const hexEl = document.getElementById('hex');
   const modeEl = document.getElementById('mode');
@@ -153,39 +164,50 @@
     return `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="alt">${alt}</div></div>`;
   }
 
+  const pressureText = (r) => r.pressureBar == null ? '–'
+    : pressureUnitEl.value === 'psi' ? `${fmt(r.pressurePsi, 1)} psi` : `${fmt(r.pressureBar, 2)} bar`;
+  const tempText = (r) => r.temperatureC == null ? '–'
+    : tempUnitEl.value === 'f' ? `${fmt(r.temperatureC * 9 / 5 + 32, 1)} °F` : `${fmt(r.temperatureC, 1)} °C`;
+  const sourceText = (r) => r.source === 'protobuf' ? 'protobuf frame' : `fixed-layout advertisement, ${esc(r.profile)} formula`;
+
   function render() {
-    const text = hexEl.value.trim();
-    if (!text) { out.hidden = true; return; }
-    out.hidden = false;
+    const results = decodeLines(hexEl.value, modeEl.value, PROFILES[profileEl.value]);
+    out.hidden = results.length === 0;
+    if (results.length === 0) return;
 
-    let bytes;
-    try {
-      bytes = parseHex(text);
-    } catch (e) {
-      out.innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    if (results.length === 1) {
+      out.innerHTML = frameHtml(results[0]);
       return;
     }
 
-    const r = decodeAny(bytes, modeEl.value, PROFILES[profileEl.value]);
-    if (!r) {
-      out.innerHTML = `<p class="error">Could not decode ${bytes.length} byte(s). The frame is too short, or isn't a supported TPMS frame.</p>`;
-      return;
-    }
+    const rows = results.map(({ reading: r, error }, i) => r
+      ? `<tr><td>${i + 1}</td><td>${pressureText(r)}</td><td>${tempText(r)}</td>
+           <td>${r.batteryVolts == null ? '–' : `${fmt(r.batteryVolts, 2)} V`}</td>
+           <td>${r.awake ? 'awake' : 'asleep'}, ${r.source === 'protobuf' ? 'protobuf' : 'fixed-layout'}</td></tr>`
+      : `<tr><td>${i + 1}</td><td colspan="4" class="error">${esc(error)}</td></tr>`).join('');
+
+    const details = results.map((res, i) =>
+      `<details><summary><span class="mono">#${i + 1}</span> <span class="mono note">${esc(res.input)}</span></summary>${frameHtml(res)}</details>`).join('');
+
+    out.innerHTML = `
+      <div class="scroll"><table class="summary">
+        <thead><tr><th>#</th><th>Pressure</th><th>Temperature</th><th>Battery</th><th>Frame</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div class="frames">${details}</div>`;
+  }
+
+  function frameHtml({ reading: r, error }) {
+    if (!r) return `<p class="error">${esc(error)}</p>`;
 
     const badge = r.awake
       ? `<span class="status awake">AWAKE</span>`
       : `<span class="status asleep">ASLEEP</span>`;
-    const src = r.source === 'protobuf' ? 'protobuf frame' : `fixed-layout advertisement, ${esc(r.profile)} formula`;
+    const src = sourceText(r);
 
     let stats = '';
-    if (r.pressureBar != null) {
-      const p = pressureUnitEl.value === 'psi' ? `${fmt(r.pressurePsi, 1)} psi` : `${fmt(r.pressureBar, 2)} bar`;
-      stats += stat('Pressure', p);
-    }
-    if (r.temperatureC != null) {
-      const t = tempUnitEl.value === 'f' ? `${fmt(r.temperatureC * 9 / 5 + 32, 1)} °F` : `${fmt(r.temperatureC, 1)} °C`;
-      stats += stat('Temperature', t);
-    }
+    if (r.pressureBar != null) stats += stat('Pressure', pressureText(r));
+    if (r.temperatureC != null) stats += stat('Temperature', tempText(r));
     if (r.batteryVolts != null) {
       stats += stat('Battery', `${fmt(r.batteryVolts, 2)} V`, `≈ ${r.batteryPercent}%`);
     }
@@ -194,7 +216,7 @@
       .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td><td>0x${v.toString(16).toUpperCase()}</td></tr>`)
       .join('');
 
-    out.innerHTML = `
+    return `
       <div>${badge} <span class="note">${src}</span></div>
       ${stats ? `<div class="stats">${stats}</div>` : `<p class="note">The sensor is asleep, so this frame carries no pressure or temperature.</p>`}
       <label>Raw fields</label>

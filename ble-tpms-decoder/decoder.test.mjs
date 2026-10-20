@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHex, decode, decodeAny, decodeProtobuf, PROFILES } from './decoder.js';
+import { parseHex, decode, decodeAny, decodeLines, decodeProtobuf, PROFILES } from './decoder.js';
 
 test('should decode an awake full advertisement', () => {
   const r = decodeAny(parseHex('0201060BFF2B0201020A860148EA0B'), 'auto');
@@ -57,6 +57,19 @@ test('should not treat fixed-layout frames as protobuf', () => {
   assert.equal(decodeProtobuf(parseHex('0201060BFF2B0201020A860148EA0B')), null);
   assert.equal(decodeProtobuf(parseHex('01020A860148EA0B')), null);
   assert.equal(decodeProtobuf(parseHex('2B0201FE03')), null);
+});
+
+test('should decode one frame per line and report bad lines', () => {
+  const results = decodeLines(
+    '0x2B020512102A0E08FA021016180320961728013003\n\n  0201060BFF2B0201020A860148EA0B  \r\nABC\n2B02',
+    'auto',
+  );
+  assert.equal(results.length, 4);
+  assert.equal(results[0].reading.temperatureC, 11);
+  assert.equal(results[1].reading.pressureBar, 2.9);
+  assert.equal(results[1].input, '0201060BFF2B0201020A860148EA0B');
+  assert.match(results[2].error, /Odd number/);
+  assert.match(results[3].error, /Could not decode/);
 });
 
 test('should reject odd-length hex', () => {

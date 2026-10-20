@@ -290,6 +290,27 @@ export function decodeProtobuf(payload) {
   return null;
 }
 
+// Decodes one frame per non-blank line. Each result has the input line and
+// either a reading or an error message.
+export function decodeLines(text, mode, profile = PROFILES.default) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((input) => {
+      let bytes;
+      try {
+        bytes = parseHex(input);
+      } catch (e) {
+        return { input, reading: null, error: e.message };
+      }
+      const reading = decodeAny(bytes, mode, profile);
+      return reading
+        ? { input, reading, error: null }
+        : { input, reading: null, error: `Could not decode ${bytes.length} byte(s). The frame is too short, or isn't a supported TPMS frame.` };
+    });
+}
+
 // Decodes whatever was pasted: a full advertisement, bare manufacturer data
 // (with or without the 2B 02 company ID), or a protobuf frame.
 export function decodeAny(bytes, mode, profile = PROFILES.default) {

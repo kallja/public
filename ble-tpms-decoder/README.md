@@ -2,7 +2,7 @@
 
 A static web page that decodes BLE TPMS frames advertised under Bluetooth company ID `0x022B` (e.g. Autel MX-Sensor BLE) into pressure, temperature and battery. Decoding runs in the browser and nothing is sent anywhere.
 
-It accepts:
+Paste one frame per line; several lines give a summary table plus per-frame details. It accepts:
 
 - a full advertisement, e.g. `0201060BFF2B0201020A860148EA0B`
 - manufacturer data for company ID `0x022B`, with or without the `2B 02` prefix
