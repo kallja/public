@@ -36,6 +36,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # Pages lets browsers cache files for 10 minutes; a per-commit query
+      # string keeps index.html and decoder.js in step after a deploy.
+      - name: Version the decoder import
+        run: sed -i "s|'./decoder.js'|'./decoder.js?v=${GITHUB_SHA::7}'|" ble-tpms-decoder/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
